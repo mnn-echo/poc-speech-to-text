@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket - POC Transcribe and Detect</title>
+    <style>
+        /* Styles for the pulsing recording animation */
+        .recording-indicator {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background-color: red;
+            position: relative;
+            margin: 20px auto;
+            display: none; /* Hidden by default */
+        }
+
+        .recording-indicator.pulsing {
+            display: block;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+            50% {
+                transform: scale(1.5);
+                opacity: 0.6;
+            }
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        /* Styles for server message display */
+        #serverMessage {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 16px;
+            color: green;
+        }
+    </style>
+</head>
+<body>
+<h1>WebSocket - POC Transcribe and Detect</h1>
+<div class="recording-indicator" id="recordingIndicator"></div>
+<button onclick="startRecording()">Start Recording</button>
+<button onclick="stopRecording()">Stop Recording</button>
+
+<div id="serverMessage">Server messages will appear here...</div>
+
+<script>
+    let websocket;
+    let mediaRecorder;
+    let audioChunks = [];
+    let sendInterval;
+    const recordingIndicator = document.getElementById('recordingIndicator');
+    const serverMessage = document.getElementById('serverMessage');
+
+    // Start WebSocket connection and recording
+    function startRecording() {
+        websocket = new WebSocket("ws://localhost:8080/ws");
+
+        // Ensure WebSocket is open before starting recording
+        websocket.onopen = () => {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+
+                    // Set the timeslice to 5 seconds to ensure `ondataavailable` fires regularly
+                    mediaRecorder.start(1000);  // 1-second chunks of audio
+
+                    // Show the recording animation
+                    recordingIndicator.classList.add('pulsing');
+
+                    mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            audioChunks.push(event.data);  // Collect audio chunks
+                        }
+                    };
+
+                    // Send audio every 5 seconds
+                    sendInterval = setInterval(() => {
+                        if (audioChunks.length > 0) {
+                            let blob = new Blob(audioChunks, { type: 'audio/webm' });
+                            websocket.send(blob);  // Send the combined blob to server
+                            audioChunks = [];  // Clear the array for the next interval
+                        }
+                    }, 5000); // 5 seconds interval
+
+                    mediaRecorder.onstop = () => {
+                        console.log('Recording stopped');
+                    };
+                })
+                .catch(error => {
+                    console.error('Error accessing microphone:', error);
+                });
+        };
+
+        // Handle incoming messages from the server
+        websocket.onmessage = (event) => {
+            console.log('Server says:', event.data);
+            // Display the server message in the front-end
+            serverMessage.innerText += `${event.data}`;
+        };
+
+        websocket.onclose = () => {
+            console.log('WebSocket closed');
+        };
+    }
+
+    // Stop the recording and WebSocket connection
+    function stopRecording() {
+        mediaRecorder.stop();
+        clearInterval(sendInterval);  // Clear the interval when recording stops
+        websocket.close();
+
+        // Hide the recording animation
+        recordingIndicator.classList.remove('pulsing');
+    }
+</script>
+</body>
+</html>
